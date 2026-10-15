@@ -2,172 +2,996 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>VRスマート農業体験 - Quest & iPad対応版</title>
-  <!-- 安定性の高い A-Frame 1.5.0 本体のみを読み込み（外部プラグイン不使用） -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AGRI-TECH VR: スマート農業経営シミュレーター</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: 'Hiragino Sans', 'Meiryo', sans-serif; user-select: none; -webkit-user-select: none; }
+    
+    /* iPad / PC用 2D HUDオーバーレイ（VRモード時は自動で隠れます） */
+    #hud {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; z-index: 10; display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .top-bar {
+      background: linear-gradient(180deg, rgba(15,23,42,0.9) 0%, rgba(15,23,42,0) 100%);
+      color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;
+      pointer-events: auto;
+    }
+    .stat-group { display: flex; gap: 15px; flex-wrap: wrap; align-items: center; }
+    .stat-badge {
+      background: rgba(30, 41, 59, 0.85); border: 1px solid #38bdf8; border-radius: 8px;
+      padding: 6px 12px; font-size: 13px; display: flex; align-items: center; gap: 6px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .stat-val { font-weight: bold; font-size: 15px; color: #38bdf8; }
+    .money-badge { border-color: #facc15; background: rgba(66, 32, 6, 0.85); }
+    .money-val { color: #facc15; font-size: 18px; font-weight: bold; }
+
+    /* トースト通知 */
+    #toast-area {
+      align-self: center; background: rgba(15, 23, 42, 0.9); border-left: 4px solid #4ade80;
+      color: #fff; padding: 10px 24px; border-radius: 6px; font-size: 15px; font-weight: bold;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4); transition: opacity 0.3s; opacity: 0;
+    }
+
+    /* 下部コントロールパネル（ツール＆移動＆設備） */
+    .bottom-panel {
+      background: linear-gradient(0deg, rgba(15,23,42,0.95) 0%, rgba(15,23,42,0) 100%);
+      padding: 15px 20px; display: flex; justify-content: space-between; align-items: flex-end;
+      pointer-events: auto; gap: 10px; flex-wrap: wrap;
+    }
+    .dpad {
+      display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 44px); gap: 5px;
+    }
+    .dpad-btn {
+      background: rgba(51, 65, 85, 0.85); border: 1px solid #94a3b8; color: white;
+      border-radius: 8px; font-size: 18px; font-weight: bold; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; active: scale(0.95);
+    }
+    .dpad-btn:active { background: #38bdf8; color: #0f172a; }
+
+    .tool-bar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+    .tool-btn {
+      background: rgba(30, 41, 59, 0.9); border: 2px solid #475569; color: #e2e8f0;
+      border-radius: 10px; padding: 8px 14px; font-size: 13px; font-weight: bold;
+      cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;
+      min-width: 72px; transition: all 0.15s;
+    }
+    .tool-btn span.icon { font-size: 22px; }
+    .tool-btn.active {
+      border-color: #4ade80; background: rgba(20, 83, 45, 0.9); color: #fff;
+      transform: translateY(-4px); box-shadow: 0 4px 12px rgba(74, 222, 128, 0.3);
+    }
+    .env-btn { border-color: #0284c7; }
+    .env-btn.on { border-color: #38bdf8; background: rgba(12, 74, 110, 0.95); box-shadow: 0 0 10px #38bdf8; }
+  </style>
+</head>
+<body>
+
+  <!-- iPad・PC操作用の2D HUD（QuestでVRモードに入ると空間内の3Dパネルで全操作可能） -->
+  <div id="hud">
+    <div class="top-bar">
+      <div class="stat-group">
+        <div class="stat-badge money-badge">💰 資金: <span class="money-val" id="ui-money">¥10,000</span></div>
+        <div class="stat-badge">🕒 <span class="stat-val" id="ui-time">Day 1 - 08:00</span></div>
+        <div class="stat-badge">🌡️ 気温: <span class="stat-val" id="ui-temp">25.0℃</span></div>
+        <div class="stat-badge">💧 湿度: <span class="stat-val" id="ui-hum">60%</span></div>
+        <div class="stat-badge">☀️ 日射: <span class="stat-val" id="ui-lux">45,000 lx</span></div>
+      </div>
+      <div class="stat-group">
+        <button class="tool-btn env-btn" id="btn-fan" onclick="Game.toggleDevice('fan')">
+          <span class="icon">🌀</span><span>換気扇 OFF</span>
+        </button>
+        <button class="tool-btn env-btn" id="btn-mist" onclick="Game.toggleDevice('mist')">
+          <span class="icon">🚿</span><span>自動潅水 OFF</span>
+        </button>
+        <button class="tool-btn env-btn" id="btn-led" onclick="Game.toggleDevice('led')">
+          <span class="icon">💡</span><span>補光LED OFF</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="toast-area">スマート農業シミュレーターへようこそ！</div>
+
+    <div class="bottom-panel">
+      <!-- iPad用 移動十字キー -->
+      <div class="dpad">
+        <div></div>
+        <div class="dpad-btn" ontouchstart="Game.move(0, -1)" ontouchend="Game.stopMove()" onmousedown="Game.move(0, -1)" onmouseup="Game.stopMove()">▲</div>
+        <div></div>
+        <div class="dpad-btn" ontouchstart="Game.move(-1, 0)" ontouchend="Game.stopMove()" onmousedown="Game.move(-1, 0)" onmouseup="Game.stopMove()">◀</div>
+        <div class="dpad-btn" ontouchstart="Game.move(0, 1)" ontouchend="Game.stopMove()" onmousedown="Game.move(0, 1)" onmouseup="Game.stopMove()">▼</div>
+        <div class="dpad-btn" ontouchstart="Game.move(1, 0)" ontouchend="Game.stopMove()" onmousedown="Game.move(1, 0)" onmouseup="Game.stopMove()">▶</div>
+      </div>
+
+      <!-- 農作業ツール切替バー -->
+      <div class="tool-bar">
+        <div class="tool-btn active" id="tool-seed" onclick="Game.selectTool('seed')">
+          <span class="icon">🌱</span><span>苗植え(¥300)</span>
+        </div>
+        <div class="tool-btn" id="tool-water" onclick="Game.selectTool('water')">
+          <span class="icon">💧</span><span>水やり</span>
+        </div>
+        <div class="tool-btn" id="tool-fertilizer" onclick="Game.selectTool('fertilizer')">
+          <span class="icon">🧪</span><span>追肥(¥150)</span>
+        </div>
+        <div class="tool-btn" id="tool-prune" onclick="Game.selectTool('prune')">
+          <span class="icon">✂️</span><span>芽かき</span>
+        </div>
+        <div class="tool-btn" id="tool-bee" onclick="Game.selectTool('bee')">
+          <span class="icon">🐝</span><span>受粉ホルモン</span>
+        </div>
+        <div class="tool-btn" id="tool-harvest" onclick="Game.selectTool('harvest')">
+          <span class="icon">🧺</span><span>収穫・出荷</span>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script>
-    window.harvestScore = 0;
-
-    AFRAME.registerComponent('crop-spot', {
-      schema: {
-        stage: {type: 'int', default: 0}
+    // ==========================================
+    // 1. Web Audio API サウンドシンセサイザー (外部音声ファイル不要)
+    // ==========================================
+    const Sound = {
+      ctx: null,
+      init() {
+        if (!this.ctx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) this.ctx = new AudioCtx();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
       },
+      play(type) {
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        if (type === 'plant') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(300, now);
+          osc.frequency.exponentialRampToValueAtTime(600, now + 0.12);
+          gain.gain.setValueAtTime(0.25, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+          osc.start(now); osc.stop(now + 0.15);
+        } else if (type === 'water') {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(500, now);
+          osc.frequency.linearRampToValueAtTime(250, now + 0.2);
+          gain.gain.setValueAtTime(0.2, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.22);
+          osc.start(now); osc.stop(now + 0.22);
+        } else if (type === 'snip') {
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(900, now);
+          osc.frequency.exponentialRampToValueAtTime(1200, now + 0.06);
+          gain.gain.setValueAtTime(0.2, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.07);
+          osc.start(now); osc.stop(now + 0.07);
+        } else if (type === 'harvest') {
+          // レジスター風の和音
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(880, now);
+          osc.frequency.setValueAtTime(1318.5, now + 0.08);
+          gain.gain.setValueAtTime(0.3, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.35);
+          osc.start(now); osc.stop(now + 0.35);
+        } else if (type === 'switch') {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(440, now);
+          gain.gain.setValueAtTime(0.1, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.05);
+          osc.start(now); osc.stop(now + 0.05);
+        } else if (type === 'error') {
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(160, now);
+          gain.gain.setValueAtTime(0.2, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+          osc.start(now); osc.stop(now + 0.2);
+        }
+      }
+    };
+
+    // ==========================================
+    // 2. ゲームコアエンジン（環境制御・経営・ツール管理）
+    // ==========================================
+    const Game = {
+      money: 10000,
+      totalHarvest: 0,
+      day: 1,
+      hour: 8.0, // 0.0 ~ 24.0
+      
+      // 環境パラメーター
+      outTemp: 22.0,
+      inTemp: 25.0,
+      humidity: 60.0,
+      lux: 45000,
+      
+      // 設備稼働状態
+      devices: { fan: false, mist: false, led: false },
+      currentTool: 'seed',
+      moveVec: { x: 0, z: 0 },
+      plots: [],
+
+      toolNames: {
+        seed: '🌱 高糖度トマト苗 (¥300)',
+        water: '💧 潅水ノズル (水分補給)',
+        fertilizer: '🧪 有機液体肥料 (¥150)',
+        prune: '✂️ 芽かきハサミ (わき芽摘み)',
+        bee: '🐝 受粉ホルモン・マルハナバチ',
+        harvest: '🧺 収穫カゴ (糖度査定・出荷)'
+      },
+
+      toast(msg, color = '#4ade80') {
+        const el = document.getElementById('toast-area');
+        if (el) {
+          el.textContent = msg;
+          el.style.borderLeftColor = color;
+          el.style.opacity = '1';
+          clearTimeout(this.toastTimer);
+          this.toastTimer = setTimeout(() => { el.style.opacity = '0'; }, 3000);
+        }
+        this.lastMessage = msg;
+        this.updateMainBoard();
+      },
+
+      selectTool(toolId) {
+        Sound.play('switch');
+        this.currentTool = toolId;
+        document.querySelectorAll('.tool-bar .tool-btn').forEach(b => b.classList.remove('active'));
+        const btn = document.getElementById('tool-' + toolId);
+        if (btn) btn.classList.add('active');
+        this.toast(`ツール変更: ${this.toolNames[toolId]}`, '#38bdf8');
+        this.updateMainBoard();
+      },
+
+      toggleDevice(dev) {
+        Sound.play('switch');
+        this.devices[dev] = !this.devices[dev];
+        const isOn = this.devices[dev];
+        
+        // 2Dボタン更新
+        const btn = document.getElementById('btn-' + dev);
+        if (btn) {
+          btn.classList.toggle('on', isOn);
+          const labels = { fan: '換気扇', mist: '自動潅水', led: '補光LED' };
+          btn.querySelector('span:last-child').textContent = `${labels[dev]} ${isOn ? 'ON' : 'OFF'}`;
+        }
+
+        // 3D空間のギミック反映
+        if (dev === 'led') {
+          document.querySelectorAll('.grow-led').forEach(el => {
+            el.setAttribute('material', 'emissive', isOn ? '#ff00ff' : '#111111');
+          });
+          const ledLight = document.getElementById('led-light-source');
+          if (ledLight) ledLight.setAttribute('intensity', isOn ? 0.6 : 0);
+        }
+        if (dev === 'mist') {
+          document.querySelectorAll('.mist-particle').forEach(el => {
+            el.setAttribute('visible', isOn);
+          });
+        }
+
+        const names = { fan: '強制換気ファン', mist: '頭上ミスト潅水', led: '植物育成LED補光' };
+        this.toast(`${names[dev]} を ${isOn ? '【稼働 ON】' : '【停止 OFF】'} にしました`, isOn ? '#38bdf8' : '#94a3b8');
+        this.updateMainBoard();
+      },
+
+      move(x, z) { this.moveVec = { x, z }; },
+      stopMove() { this.moveVec = { x: 0, z: 0 }; },
+
+      // 毎秒の環境・生育シミュレーション更新
+      tick() {
+        // 時間を進める (1秒 = 15分相当)
+        this.hour += 0.25;
+        if (this.hour >= 24) {
+          this.hour = 0;
+          this.day += 1;
+        }
+
+        // 太陽高度と日射量計算
+        const sunAngle = ((this.hour - 6) / 12) * Math.PI;
+        const isDay = this.hour >= 5.5 && this.hour <= 18.5;
+        const sunFactor = isDay ? Math.max(0, Math.sin(sunAngle)) : 0;
+
+        // 空の色と太陽光の強さを動的に変化
+        const sky = document.getElementById('main-sky');
+        const sunLight = document.getElementById('sun-light');
+        if (sky && sunLight) {
+          if (sunFactor > 0.3) {
+            sky.setAttribute('color', '#7dd3fc');
+            sunLight.setAttribute('intensity', 0.85);
+          } else if (sunFactor > 0) {
+            sky.setAttribute('color', '#fdba74'); // 朝焼け・夕焼け
+            sunLight.setAttribute('intensity', 0.45);
+          } else {
+            sky.setAttribute('color', '#0f172a'); // 夜間
+            sunLight.setAttribute('intensity', 0.1);
+          }
+        }
+
+        // 日射量(Lux)
+        this.lux = Math.round(sunFactor * 65000 + (this.devices.led ? 18000 : 0));
+
+        // ハウス内気温の物理計算（日射で上がり、換気扇で下がる）
+        const targetOutTemp = 16 + sunFactor * 14; // 外気温 16℃〜30℃
+        const greenhouseHeat = sunFactor * 9;      // ハウスの温室効果
+        const fanCooling = this.devices.fan ? -6.5 : 0;
+        const mistCooling = this.devices.mist ? -2.5 : 0;
+        const targetInTemp = targetOutTemp + greenhouseHeat + fanCooling + mistCooling;
+        this.inTemp += (targetInTemp - this.inTemp) * 0.25;
+
+        // ハウス内湿度
+        const targetHum = 55 + (this.devices.mist ? 28 : 0) - (this.devices.fan ? 15 : 0) - (sunFactor * 10);
+        this.humidity += (Math.max(30, Math.min(95, targetHum)) - this.humidity) * 0.25;
+
+        // 設備の電気代・水道代コスト
+        let cost = 0;
+        if (this.devices.fan) cost += 5;
+        if (this.devices.mist) cost += 8;
+        if (this.devices.led) cost += 12;
+        this.money = Math.max(0, this.money - cost);
+
+        // 全栽培ポットの生育計算
+        this.plots.forEach(p => p.simulateTick());
+
+        // UI反映
+        this.update2DHUD();
+        this.updateMainBoard();
+      },
+
+      update2DHUD() {
+        const h = Math.floor(this.hour).toString().padStart(2, '0');
+        const m = Math.floor((this.hour % 1) * 60).toString().padStart(2, '0');
+        document.getElementById('ui-money').textContent = `¥${this.money.toLocaleString()}`;
+        document.getElementById('ui-time').textContent = `Day ${this.day} - ${h}:${m}`;
+        
+        const tempEl = document.getElementById('ui-temp');
+        tempEl.textContent = `${this.inTemp.toFixed(1)}℃`;
+        tempEl.style.color = (this.inTemp > 30 || this.inTemp < 15) ? '#f87171' : '#38bdf8';
+
+        document.getElementById('ui-hum').textContent = `${Math.round(this.humidity)}%`;
+        document.getElementById('ui-lux').textContent = `${this.lux.toLocaleString()} lx`;
+      },
+
+      // VR空間内のメイン日本語モニターをCanvasで高速描画
+      updateMainBoard() {
+        const canvas = document.getElementById('main-board-canvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        
+        // 背景
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, 1024, 512);
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 8;
+        ctx.strokeRect(10, 10, 1004, 492);
+
+        // ヘッダー
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(14, 14, 996, 76);
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 34px sans-serif';
+        ctx.fillText('🌱 スマート農業 環境制御・経営ターミナル', 35, 64);
+
+        const h = Math.floor(this.hour).toString().padStart(2, '0');
+        const m = Math.floor((this.hour % 1) * 60).toString().padStart(2, '0');
+        ctx.fillStyle = '#facc15';
+        ctx.font = 'bold 32px sans-serif';
+        ctx.fillText(`資金: ¥${this.money.toLocaleString()}   [ Day ${this.day}  ${h}:${m} ]`, 520, 64);
+
+        // 環境センサー値ボックス
+        const drawBox = (x, y, w, h, title, val, sub, alert) => {
+          ctx.fillStyle = alert ? '#450a0a' : '#1e293b';
+          ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = alert ? '#ef4444' : '#475569';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(x, y, w, h);
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = 'bold 22px sans-serif';
+          ctx.fillText(title, x + 20, y + 36);
+          ctx.fillStyle = alert ? '#fca5a5' : '#f8fafc';
+          ctx.font = 'bold 42px sans-serif';
+          ctx.fillText(val, x + 20, y + 90);
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = '18px sans-serif';
+          ctx.fillText(sub, x + 20, y + 122);
+        };
+
+        const tempAlert = this.inTemp > 30 || this.inTemp < 15;
+        drawBox(35, 115, 290, 140, '🌡️ ハウス内気温', `${this.inTemp.toFixed(1)} ℃`, '適温: 18.0 ~ 28.0℃', tempAlert);
+        drawBox(355, 115, 290, 140, '💧 相対湿度', `${Math.round(this.humidity)} %`, '適正: 50 ~ 75%', false);
+        drawBox(675, 115, 310, 140, '☀️ 日射・補光量', `${this.lux.toLocaleString()} lx`, `累計出荷: ${this.totalHarvest} 箱`, false);
+
+        // 現在の選択ツール＆設備ステータス
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(35, 280, 950, 110);
+        ctx.fillStyle = '#4ade80';
+        ctx.font = 'bold 28px sans-serif';
+        ctx.fillText(`現在選択中のツール: ${this.toolNames[this.currentTool]}`, 55, 325);
+        
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '24px sans-serif';
+        const fStr = `🌀換気扇: ${this.devices.fan ? 'ON' : 'OFF'}   🚿自動潅水: ${this.devices.mist ? 'ON' : 'OFF'}   💡LED補光: ${this.devices.led ? 'ON' : 'OFF'}`;
+        ctx.fillText(fStr, 55, 368);
+
+        // 最新ログメッセージ
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(35, 410, 950, 65);
+        ctx.strokeStyle = '#4ade80';
+        ctx.strokeRect(35, 410, 950, 65);
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 25px sans-serif';
+        ctx.fillText(`💬 ガイド: ${this.lastMessage || '下のボタンや畝のポットをタップして作業しましょう'}`, 55, 452);
+
+        // A-Frameのマテリアル更新通知
+        const boardEl = document.getElementById('vr-main-board');
+        if (boardEl && boardEl.getObject3D('mesh')) {
+          boardEl.getObject3D('mesh').material.map.needsUpdate = true;
+        }
+      }
+    };
+
+    // ==========================================
+    // 3. 作物ポット（畝の株）コンポーネント（リアルな生育＆わき芽＆糖度計算）
+    // ==========================================
+    AFRAME.registerComponent('smart-crop', {
+      schema: { id: { type: 'int', default: 0 } },
       init: function () {
         const el = this.el;
-        
-        // 茎
+        Game.plots.push(this);
+
+        // 作物の内部ステータス
+        this.resetState();
+
+        // --- 3Dモデル構造の組み立て ---
+        // 1. マルチシートの穴＆土台
+        this.soil = document.createElement('a-cylinder');
+        this.soil.setAttribute('radius', '0.28');
+        this.soil.setAttribute('height', '0.08');
+        this.soil.setAttribute('color', '#3e2723');
+        this.soil.classList.add('clickable');
+        el.appendChild(this.soil);
+
+        // 2. 園芸支柱（竹・スチールポール）
+        const pole = document.createElement('a-cylinder');
+        pole.setAttribute('radius', '0.015');
+        pole.setAttribute('height', '1.5');
+        pole.setAttribute('position', '0 0.75 -0.08');
+        pole.setAttribute('color', '#2e7d32');
+        el.appendChild(pole);
+
+        // 3. 主茎（成長に応じて伸びる）
         this.stem = document.createElement('a-cylinder');
-        this.stem.setAttribute('color', '#2e7d32');
-        this.stem.setAttribute('radius', '0.025');
+        this.stem.setAttribute('radius', '0.022');
+        this.stem.setAttribute('color', '#388e3c');
         this.stem.setAttribute('visible', 'false');
         el.appendChild(this.stem);
 
-        // 葉
-        this.leaves = document.createElement('a-cone');
-        this.leaves.setAttribute('color', '#4caf50');
-        this.leaves.setAttribute('visible', 'false');
-        el.appendChild(this.leaves);
+        // 4. 葉っぱグループ（3段の立体的な葉）
+        this.leafGroup = document.createElement('a-entity');
+        this.leafGroup.setAttribute('visible', 'false');
+        for (let i = 0; i < 4; i++) {
+          const leaf = document.createElement('a-cone');
+          leaf.setAttribute('radius-bottom', '0.18');
+          leaf.setAttribute('height', '0.15');
+          leaf.setAttribute('color', '#4caf50');
+          leaf.setAttribute('position', `0 ${0.15 + i * 0.22} 0`);
+          this.leafGroup.appendChild(leaf);
+        }
+        el.appendChild(this.leafGroup);
 
-        // 実（トマト）
-        this.fruit = document.createElement('a-sphere');
-        this.fruit.setAttribute('radius', '0.07');
-        this.fruit.setAttribute('visible', 'false');
-        el.appendChild(this.fruit);
+        // 5. わき芽（芽かき対象：放置すると養分を奪う赤いトゲ状の枝）
+        this.sucker = document.createElement('a-cone');
+        this.sucker.setAttribute('radius-bottom', '0.09');
+        this.sucker.setAttribute('height', '0.28');
+        this.sucker.setAttribute('color', '#cddc39');
+        this.sucker.setAttribute('position', '0.14 0.45 0.08');
+        this.sucker.setAttribute('rotation', '0 0 -45');
+        this.sucker.setAttribute('visible', 'false');
+        el.appendChild(this.sucker);
 
-        // ガイドテキスト
-        this.label = document.createElement('a-text');
-        this.label.setAttribute('value', 'Tap: Plant');
-        this.label.setAttribute('align', 'center');
-        this.label.setAttribute('position', '0 0.45 0');
-        this.label.setAttribute('scale', '0.45 0.45 0.45');
-        this.label.setAttribute('color', '#ffffff');
-        el.appendChild(this.label);
+        // 6. 花房（黄色いトマトの花）
+        this.flowers = document.createElement('a-entity');
+        this.flowers.setAttribute('position', '0 0.65 0.12');
+        this.flowers.setAttribute('visible', 'false');
+        for (let i = -1; i <= 1; i++) {
+          const fl = document.createElement('a-sphere');
+          fl.setAttribute('radius', '0.035');
+          fl.setAttribute('color', '#ffeb3b');
+          fl.setAttribute('position', `${i * 0.07} 0 0`);
+          this.flowers.appendChild(fl);
+        }
+        el.appendChild(this.flowers);
 
-        // iPadのタッチとQuestのトリガーの二重発火（チャタリング）防止用タイマー
-        this.lastClickTime = 0;
+        // 7. 果実房（3つのトマトの実）
+        this.fruitCluster = document.createElement('a-entity');
+        this.fruitCluster.setAttribute('position', '0 0.6 0.14');
+        this.fruitCluster.setAttribute('visible', 'false');
+        this.fruits = [];
+        for (let i = -1; i <= 1; i++) {
+          const fr = document.createElement('a-sphere');
+          fr.setAttribute('radius', '0.065');
+          fr.setAttribute('position', `${i * 0.09} ${-Math.abs(i)*0.03} 0`);
+          fr.setAttribute('color', '#8bc34a');
+          this.fruitCluster.appendChild(fr);
+          this.fruits.push(fr);
+        }
+        el.appendChild(this.fruitCluster);
 
-        el.addEventListener('click', () => {
-          const now = Date.now();
-          if (now - this.lastClickTime < 300) return; // 0.3秒以内の連続反応を無視
-          this.lastClickTime = now;
+        // 8. 個別株ステータスボード（日本語Canvasテクスチャ）
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = 512;
+        this.canvas.height = 256;
+        this.board = document.createElement('a-plane');
+        this.board.setAttribute('width', '0.75');
+        this.board.setAttribute('height', '0.38');
+        this.board.setAttribute('position', '0 1.25 0');
+        this.board.classList.add('clickable');
+        
+        // カメラの方へ少し傾ける
+        const zPos = el.getAttribute('position').x < 0 ? 55 : -55;
+        this.board.setAttribute('rotation', `0 ${zPos} 0`);
+        el.appendChild(this.board);
 
-          let s = (this.data.stage + 1) % 4;
-          this.data.stage = s;
-          this.updateVisuals(s);
+        // Canvasテクスチャのバインド
+        this.board.addEventListener('loaded', () => {
+          const tex = new THREE.CanvasTexture(this.canvas);
+          this.board.getObject3D('mesh').material = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+          this.tex = tex;
+          this.renderLabel();
         });
+
+        // クリック・タップ判定（ポット本体でも看板でも反応）
+        this.lastClick = 0;
+        const onInteract = () => {
+          const now = Date.now();
+          if (now - this.lastClick < 300) return;
+          this.lastClick = now;
+          this.handleAction(Game.currentTool);
+        };
+        this.soil.addEventListener('click', onInteract);
+        this.board.addEventListener('click', onInteract);
       },
 
-      updateVisuals: function (stage) {
-        const scoreBoard = document.querySelector('#score-text');
-        const statusBoard = document.querySelector('#action-log');
+      resetState() {
+        this.stage = 0; // 0:空き, 1:定植, 2:栄養成長, 3:開花, 4:肥大期(緑), 5:完熟(収穫可)
+        this.growth = 0; // 0 ~ 100%
+        this.water = 65; // 0 ~ 100%
+        this.fertilizer = 60; // 0 ~ 100%
+        this.brix = 5.0; // 糖度 (4.0 ~ 11.0)
+        this.hasSucker = false; // わき芽の有無
+        this.pollinated = false; // 受粉済みか
+      },
 
-        if (stage === 0) {
-          window.harvestScore += 1;
-          scoreBoard.setAttribute('value', 'Harvested: ' + window.harvestScore + ' pcs');
-          statusBoard.setAttribute('value', 'Status: Harvested crisp tomatoes!');
+      // ツールを使った農作業アクション
+      handleAction(tool) {
+        if (tool === 'seed') {
+          if (this.stage !== 0) {
+            Sound.play('error');
+            Game.toast('ここは既に植わっています！別のツールを選んでください', '#f87171');
+            return;
+          }
+          if (Game.money < 300) {
+            Sound.play('error');
+            Game.toast('資金が足りません！（苗代 ¥300）', '#f87171');
+            return;
+          }
+          Game.money -= 300;
+          this.stage = 1;
+          this.growth = 5;
+          this.water = 75;
+          this.fertilizer = 70;
+          this.brix = 5.5;
+          Sound.play('plant');
+          Game.toast('🌱 高糖度トマトの苗を定植しました！（-¥300）');
+        }
+        else if (tool === 'water') {
+          if (this.stage === 0) { Sound.play('error'); Game.toast('まずは「苗植え」で苗を植えてください', '#fbbf24'); return; }
+          this.water = Math.min(100, this.water + 35);
+          Sound.play('water');
+          Game.toast('💧 たっぷり潅水しました！土壌水分が回復しました');
+        }
+        else if (tool === 'fertilizer') {
+          if (this.stage === 0) { Sound.play('error'); return; }
+          if (Game.money < 150) { Sound.play('error'); Game.toast('資金不足です（追肥 ¥150）', '#f87171'); return; }
+          Game.money -= 150;
+          this.fertilizer = Math.min(100, this.fertilizer + 40);
+          this.brix = Math.min(11.0, this.brix + 0.45);
+          Sound.play('water');
+          Game.toast('🧪 有機アミノ酸液肥を追肥しました！糖度が上昇します（-¥150）');
+        }
+        else if (tool === 'prune') {
+          if (this.hasSucker) {
+            this.hasSucker = false;
+            this.brix = Math.min(11.0, this.brix + 0.6);
+            Sound.play('snip');
+            Game.toast('✂️ わき芽を摘み取りました（芽かき成功）！主茎と実に栄養が集中します！');
+          } else {
+            Sound.play('error');
+            Game.toast('現在、摘み取る「わき芽」は生えていません', '#fbbf24');
+          }
+        }
+        else if (tool === 'bee') {
+          if (this.stage === 3 && !this.pollinated) {
+            this.pollinated = true;
+            this.stage = 4; // 着果へ移行
+            this.brix += 0.5;
+            Sound.play('plant');
+            Game.toast('🐝 受粉成功！花が着果して青いトマトの実が膨らみ始めました！');
+          } else {
+            Sound.play('error');
+            Game.toast('受粉は「開花中（黄色い花）」の株にのみ有効です', '#fbbf24');
+          }
+        }
+        else if (tool === 'harvest') {
+          if (this.stage === 5) {
+            // 糖度に応じたランクと買取価格計算
+            let rank = 'B';
+            let price = 800;
+            if (this.brix >= 8.5) { rank = 'S (特選極甘)'; price = 2400; }
+            else if (this.brix >= 7.0) { rank = 'A (秀品)'; price = 1500; }
+            
+            Game.money += price;
+            Game.totalHarvest += 1;
+            Sound.play('harvest');
+            Game.toast(`🧺 収穫出荷！ 糖度 ${this.brix.toFixed(1)}度 【${rank}】 売上 +¥${price.toLocaleString()}！`, '#facc15');
+            this.resetState();
+          } else {
+            Sound.play('error');
+            Game.toast('まだ完熟していません！実が真っ赤になってから収穫しましょう', '#fbbf24');
+          }
+        }
+
+        this.update3DVisuals();
+        this.renderLabel();
+      },
+
+      // 毎秒の植物生理シミュレーション
+      simulateTick() {
+        if (this.stage === 0) return;
+
+        // 水分と肥料の消費（自動潅水ONなら水分増加）
+        if (Game.devices.mist) {
+          this.water = Math.min(100, this.water + 5);
+        } else {
+          this.water = Math.max(0, this.water - (1.8 + (Game.inTemp > 28 ? 1.5 : 0)));
+        }
+        this.fertilizer = Math.max(0, this.fertilizer - 0.8);
+
+        // 土の色を水分量で変化させる
+        if (this.water < 30) this.soil.setAttribute('color', '#8d6e63'); // 乾いた土
+        else if (this.water > 75) this.soil.setAttribute('color', '#271815'); // 湿った黒土
+        else this.soil.setAttribute('color', '#4e342e');
+
+        // 環境ストレス判定（適温18~28℃、水分25%以上）
+        const tempOK = Game.inTemp >= 18 && Game.inTemp <= 28;
+        const waterOK = this.water >= 25;
+        const lightOK = Game.lux >= 12000;
+
+        // 成長スピード計算
+        if (tempOK && waterOK && lightOK) {
+          // わき芽があると成長と糖度が阻害される
+          const penalty = this.hasSucker ? 0.4 : 1.0;
           
+          // 開花期(stage 3)で未受粉の場合は成長ストップ（受粉待ち）
+          if (!(this.stage === 3 && !this.pollinated)) {
+            this.growth = Math.min(100, this.growth + (3.2 * penalty));
+          }
+          // 熟期に適度な水ストレス（水分30〜55%）を与えるとフルーツトマト化して糖度が跳ね上がる！
+          if (this.stage === 4 && this.water >= 25 && this.water <= 55) {
+            this.brix = Math.min(11.0, this.brix + 0.12);
+          }
+        } else {
+          // ストレスで糖度低下
+          if (!tempOK || this.water < 10) {
+            this.brix = Math.max(4.0, this.brix - 0.08);
+          }
+        }
+
+        // わき芽のランダム発生（栄養成長期〜着果期）
+        if ((this.stage === 2 || this.stage === 3 || this.stage === 4) && !this.hasSucker) {
+          if (Math.random() < 0.08) {
+            this.hasSucker = true;
+          }
+        }
+
+        // 成長度に応じたステージ移行
+        if (this.growth >= 25 && this.stage === 1) this.stage = 2; // 栄養成長
+        if (this.growth >= 50 && this.stage === 2) this.stage = 3; // 開花（受粉待ち）
+        if (this.growth >= 100 && this.stage === 4) this.stage = 5; // 完熟！
+
+        this.update3DVisuals();
+        this.renderLabel();
+      },
+
+      // 3Dモデルの見た目更新
+      update3DVisuals() {
+        if (this.stage === 0) {
           this.stem.setAttribute('visible', 'false');
-          this.leaves.setAttribute('visible', 'false');
-          this.fruit.setAttribute('visible', 'false');
-          this.label.setAttribute('value', 'Tap: Plant');
-          this.label.setAttribute('position', '0 0.45 0');
-          this.label.setAttribute('color', '#ffffff');
-        } 
-        else if (stage === 1) {
-          statusBoard.setAttribute('value', 'Status: Seed planted. Give water!');
-          this.stem.setAttribute('visible', 'true');
-          this.stem.setAttribute('height', '0.2');
-          this.stem.setAttribute('position', '0 0.15 0');
+          this.leafGroup.setAttribute('visible', 'false');
+          this.sucker.setAttribute('visible', 'false');
+          this.flowers.setAttribute('visible', 'false');
+          this.fruitCluster.setAttribute('visible', 'false');
+          return;
+        }
 
-          this.leaves.setAttribute('visible', 'true');
-          this.leaves.setAttribute('radius-bottom', '0.12');
-          this.leaves.setAttribute('height', '0.2');
-          this.leaves.setAttribute('position', '0 0.25 0');
+        // 茎の伸長
+        this.stem.setAttribute('visible', 'true');
+        const h = 0.2 + (this.growth / 100) * 0.85;
+        this.stem.setAttribute('height', h);
+        this.stem.setAttribute('position', `0 ${h / 2} 0`);
 
-          this.label.setAttribute('value', 'Tap: Water');
-          this.label.setAttribute('position', '0 0.55 0');
-        } 
-        else if (stage === 2) {
-          statusBoard.setAttribute('value', 'Status: Growing well! Wait for ripening.');
-          this.stem.setAttribute('height', '0.5');
-          this.stem.setAttribute('position', '0 0.3 0');
+        // 葉の展開
+        this.leafGroup.setAttribute('visible', 'true');
+        const scale = 0.4 + (this.growth / 100) * 0.7;
+        this.leafGroup.setAttribute('scale', `${scale} ${scale} ${scale}`);
 
-          this.leaves.setAttribute('radius-bottom', '0.24');
-          this.leaves.setAttribute('height', '0.45');
-          this.leaves.setAttribute('position', '0 0.45 0');
+        // わき芽の表示
+        this.sucker.setAttribute('visible', this.hasSucker);
 
-          this.fruit.setAttribute('visible', 'true');
-          this.fruit.setAttribute('color', '#8bc34a');
-          this.fruit.setAttribute('position', '0.1 0.4 0.12');
+        // 花と実の表示
+        this.flowers.setAttribute('visible', this.stage === 3);
+        this.fruitCluster.setAttribute('visible', this.stage >= 4);
 
-          this.label.setAttribute('value', 'Tap: Ripen');
-          this.label.setAttribute('position', '0 0.8 0');
-        } 
-        else if (stage === 3) {
-          statusBoard.setAttribute('value', 'Status: Ripe and ready to harvest!');
-          this.fruit.setAttribute('color', '#e53935');
-          this.fruit.setAttribute('radius', '0.09');
+        if (this.stage === 4) {
+          this.fruits.forEach(f => {
+            f.setAttribute('color', '#8bc34a'); // 緑の実
+            f.setAttribute('radius', '0.06');
+          });
+        } else if (this.stage === 5) {
+          this.fruits.forEach(f => {
+            f.setAttribute('color', '#e53935'); // 完熟の赤い実
+            f.setAttribute('radius', '0.08');
+          });
+        }
+      },
 
-          this.label.setAttribute('value', '[ READY! Tap to Harvest ]');
-          this.label.setAttribute('color', '#ffeb3b');
+      // 株ごとの日本語ステータスボード描画
+      renderLabel() {
+        if (!this.tex) return;
+        const ctx = this.canvas.getContext('2d');
+        ctx.clearRect(0, 0, 512, 256);
+
+        // 背景パネル
+        ctx.fillStyle = this.stage === 5 ? 'rgba(66, 32, 6, 0.92)' : 'rgba(15, 23, 42, 0.88)';
+        ctx.fillRect(8, 8, 496, 240);
+        ctx.strokeStyle = this.stage === 5 ? '#facc15' : (this.hasSucker ? '#f97316' : '#38bdf8');
+        ctx.lineWidth = 6;
+        ctx.strokeRect(8, 8, 496, 240);
+
+        if (this.stage === 0) {
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = 'bold 34px sans-serif';
+          ctx.fillText(`畝ポット #${this.data.id} 【空き】`, 35, 75);
+          ctx.fillStyle = '#4ade80';
+          ctx.font = 'bold 30px sans-serif';
+          ctx.fillText('👉「苗植え」を選んでタップ', 35, 150);
+        } else {
+          const stNames = ['', '🌱 定植初期', '🌿 栄養成長期', '🌼 開花(受粉待ち)', '🍅 果実肥大期', '✨ 完熟(収穫可能!)'];
+          ctx.fillStyle = this.stage === 5 ? '#facc15' : '#38bdf8';
+          ctx.font = 'bold 30px sans-serif';
+          ctx.fillText(`${stNames[this.stage]} (${Math.floor(this.growth)}%)`, 28, 52);
+
+          // 糖度バッジ
+          ctx.fillStyle = '#f43f5e';
+          ctx.font = 'bold 28px sans-serif';
+          ctx.fillText(`糖度: ${this.brix.toFixed(1)}度`, 330, 52);
+
+          // 水分バー
+          ctx.fillStyle = '#e2e8f0';
+          ctx.font = '24px sans-serif';
+          ctx.fillText(`💧水分: ${Math.round(this.water)}%`, 28, 105);
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(195, 82, 280, 24);
+          ctx.fillStyle = this.water < 25 ? '#ef4444' : '#38bdf8';
+          ctx.fillRect(195, 82, (this.water / 100) * 280, 24);
+
+          // 肥沃度バー
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillText(`🧪肥料: ${Math.round(this.fertilizer)}%`, 28, 150);
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(195, 127, 280, 24);
+          ctx.fillStyle = '#a855f7';
+          ctx.fillRect(195, 127, (this.fertilizer / 100) * 280, 24);
+
+          // 要アクション警告表示
+          ctx.font = 'bold 26px sans-serif';
+          if (this.stage === 5) {
+            ctx.fillStyle = '#facc15';
+            ctx.fillText('🧺「収穫」ツールで出荷できます！', 28, 212);
+          } else if (this.stage === 3 && !this.pollinated) {
+            ctx.fillStyle = '#fde047';
+            ctx.fillText('🐝 花が咲きました！「受粉」が必要です', 28, 212);
+          } else if (this.hasSucker) {
+            ctx.fillStyle = '#fb923c';
+            ctx.fillText('✂️ わき芽発生！「芽かき」で摘み取って！', 28, 212);
+          } else if (this.water < 25) {
+            ctx.fillStyle = '#f87171';
+            ctx.fillText('⚠️ 水不足です！「水やり」してください', 28, 212);
+          } else {
+            ctx.fillStyle = '#4ade80';
+            ctx.fillText('✅ 順調に光合成・生育しています', 28, 212);
+          }
+        }
+        this.tex.needsUpdate = true;
+      }
+    });
+
+    // ==========================================
+    // 4. プレイヤー移動＆ファン回転ループコンポーネント
+    // ==========================================
+    AFRAME.registerComponent('scene-controller', {
+      init: function () {
+        this.rig = document.getElementById('rig');
+        this.fanBlades = document.getElementById('fan-blades');
+        
+        // メインモニターのCanvasバインド
+        const mainBoard = document.getElementById('vr-main-board');
+        mainBoard.addEventListener('loaded', () => {
+          const canvas = document.getElementById('main-board-canvas');
+          const tex = new THREE.CanvasTexture(canvas);
+          mainBoard.getObject3D('mesh').material = new THREE.MeshBasicMaterial({ map: tex });
+          Game.updateMainBoard();
+        });
+
+        // 1秒ごとのゲーム進行タイマー
+        setInterval(() => Game.tick(), 1000);
+      },
+      tick: function (time, delta) {
+        const dt = delta / 1000;
+        
+        // 十字キー移動処理
+        if (Game.moveVec.x !== 0 || Game.moveVec.z !== 0) {
+          const pos = this.rig.getAttribute('position');
+          pos.x = Math.max(-2.2, Math.min(2.2, pos.x + Game.moveVec.x * 2.2 * dt));
+          pos.z = Math.max(-3.5, Math.min(3.0, pos.z + Game.moveVec.z * 2.2 * dt));
+          this.rig.setAttribute('position', pos);
+        }
+
+        // 換気扇の回転アニメーション
+        if (this.fanBlades && Game.devices.fan) {
+          const rot = this.fanBlades.getAttribute('rotation');
+          rot.z = (rot.z + 540 * dt) % 360;
+          this.fanBlades.setAttribute('rotation', rot);
         }
       }
     });
+
+    // VR空間内の3Dボタン用コンポーネント（Quest 3Sのレーザー操作用）
+    AFRAME.registerComponent('vr-btn', {
+      schema: { action: { type: 'string' }, arg: { type: 'string' } },
+      init: function () {
+        this.el.classList.add('clickable');
+        this.lastClick = 0;
+        this.el.addEventListener('click', () => {
+          const now = Date.now();
+          if (now - this.lastClick < 300) return;
+          this.lastClick = now;
+          if (this.data.action === 'tool') Game.selectTool(this.data.arg);
+          if (this.data.action === 'dev') Game.toggleDevice(this.data.arg);
+        });
+      }
+    });
   </script>
-</head>
-<body>
-  <!-- raycasterとcursorをシーン全体に設定することでiPadの画面直接タップに完全対応 -->
-  <a-scene cursor="rayOrigin: mouse; fuse: false" raycaster="objects: .clickable">
+
+  <!-- 非表示の動的テクスチャ生成用Canvas -->
+  <canvas id="main-board-canvas" width="1024" height="512" style="display:none;"></canvas>
+
+  <!-- ========================================== -->
+  <!-- 5. A-Frame 3Dスマート温室空間の構築          -->
+  <!-- ========================================== -->
+  <a-scene scene-controller cursor="rayOrigin: mouse; fuse: false" raycaster="objects: .clickable">
     
-    <!-- 空と地面（外部プラグインを使わず標準タグで高速描画） -->
-    <a-sky color="#b3e5fc"></a-sky>
-    <a-plane position="0 0 0" rotation="-90 0 0" width="60" height="60" color="#558b2f"></a-plane>
+    <!-- 時間帯で変化する空と太陽光 -->
+    <a-sky id="main-sky" color="#7dd3fc"></a-sky>
+    <a-light type="ambient" color="#ffffff" intensity="0.55"></a-light>
+    <a-light id="sun-light" type="directional" color="#fef08a" intensity="0.85" position="-3 6 4"></a-light>
+    <a-light id="led-light-source" type="point" color="#f0abfc" intensity="0" position="0 2.8 -1.5" distance="8"></a-light>
 
-    <!-- 照明 -->
-    <a-light type="ambient" color="#ffffff" intensity="0.7"></a-light>
-    <a-light type="directional" color="#fff8e1" intensity="0.6" position="-2 4 2"></a-light>
+    <!-- 屋外の芝生とハウス内の防草コンクリート床 -->
+    <a-plane position="0 0 0" rotation="-90 0 0" width="80" height="80" color="#3f6212"></a-plane>
+    <a-plane position="0 0.01 -1" rotation="-90 0 0" width="7" height="10" color="#334155"></a-plane>
+    <!-- 中央の作業通路 -->
+    <a-plane position="0 0.02 -1" rotation="-90 0 0" width="1.8" height="9" color="#64748b"></a-plane>
 
-    <!-- ビニールハウス -->
-    <a-entity position="0 0 -1.8">
-      <!-- ハウスのアーチ屋根 -->
-      <a-cylinder position="0 2.2 0" radius="3.2" height="6" rotation="90 0 0" 
+    <!-- 本格的な鉄骨ビニールハウス構造 -->
+    <a-entity position="0 0 -1">
+      <!-- 半透明POフィルム屋根 -->
+      <a-cylinder position="0 2.4 0" radius="3.6" height="9" rotation="90 0 0" 
                   theta-start="90" theta-length="180" side="double" 
-                  material="color: #ffffff; opacity: 0.3; transparent: true"></a-cylinder>
+                  material="color: #e0f2fe; opacity: 0.25; transparent: true"></a-cylinder>
+
+      <!-- 鉄骨アーチパイプ (4本) -->
+      <a-torus position="0 2.4 -4.2" radius="3.55" radius-tubular="0.04" arc="180" color="#94a3b8"></a-torus>
+      <a-torus position="0 2.4 -1.4" radius="3.55" radius-tubular="0.04" arc="180" color="#94a3b8"></a-torus>
+      <a-torus position="0 2.4 1.4"  radius="3.55" radius-tubular="0.04" arc="180" color="#94a3b8"></a-torus>
+      <a-torus position="0 2.4 4.2"  radius="3.55" radius-tubular="0.04" arc="180" color="#94a3b8"></a-torus>
+
+      <!-- 頭上の育成LED補光パイプ＆ミストノズル -->
+      <a-cylinder class="grow-led" position="-1.5 3.1 0" radius="0.03" height="8" rotation="90 0 0" color="#4a044e" material="emissive: #111111"></a-cylinder>
+      <a-cylinder class="grow-led" position="1.5 3.1 0"  radius="0.03" height="8" rotation="90 0 0" color="#4a044e" material="emissive: #111111"></a-cylinder>
       
-      <!-- ハウス内の通路（コンクリートの床） -->
-      <a-plane position="0 0.01 0" rotation="-90 0 0" width="1.5" height="6" color="#90a4ae"></a-plane>
+      <!-- ミストシャワー演出（稼働時のみ表示） -->
+      <a-cone class="mist-particle" position="-1.5 2.1 0" radius-bottom="1.2" height="2.0" color="#bae6fd" material="opacity: 0.22; transparent: true" visible="false"></a-cone>
+      <a-cone class="mist-particle" position="1.5 2.1 0"  radius-bottom="1.2" height="2.0" color="#bae6fd" material="opacity: 0.22; transparent: true" visible="false"></a-cone>
 
-      <!-- スマート農業ダッシュボード -->
-      <a-plane position="0 2.1 -2.8" width="3.2" height="1.3" color="#263238">
-        <a-text value="=== Smart Greenhouse VR ===" align="center" position="0 0.4 0.02" width="4" color="#4dd0e1"></a-text>
-        <a-text value="Temp: 25.4 C  |  Humidity: 62%  |  Lux: 38,000" align="center" position="0 0.15 0.02" width="3.2" color="#a5d6a7"></a-text>
-        <a-text id="score-text" value="Harvested: 0 pcs" align="center" position="0 -0.12 0.02" width="5" color="#ffeb3b"></a-text>
-        <a-text id="action-log" value="Status: Tap or click the brown soil pots!" align="center" position="0 -0.42 0.02" width="3.2" color="#ffffff"></a-text>
-      </a-plane>
+      <!-- 奥壁の大型換気扇（稼働時に高速回転） -->
+      <a-entity position="0 3.4 -4.4">
+        <a-box width="1.2" height="1.2" depth="0.15" color="#475569"></a-box>
+        <a-cylinder radius="0.5" height="0.18" rotation="90 0 0" color="#0f172a"></a-cylinder>
+        <a-entity id="fan-blades" position="0 0 0.1">
+          <a-box width="0.9" height="0.15" depth="0.02" color="#cbd5e1"></a-box>
+          <a-box width="0.15" height="0.9" depth="0.02" color="#cbd5e1"></a-box>
+        </a-entity>
+      </a-entity>
 
-      <!-- 左の畝とポット -->
-      <a-box position="-1.1 0.2 0" width="0.8" height="0.4" depth="4" color="#3e2723"></a-box>
-      <a-cylinder class="clickable" crop-spot position="-1.1 0.45 -1.2" radius="0.26" height="0.1" color="#6d4c41"></a-cylinder>
-      <a-cylinder class="clickable" crop-spot position="-1.1 0.45 0"    radius="0.26" height="0.1" color="#6d4c41"></a-cylinder>
-      <a-cylinder class="clickable" crop-spot position="-1.1 0.45 1.2"  radius="0.26" height="0.1" color="#6d4c41"></a-cylinder>
+      <!-- 正面：日本語大型スマート農業モニター -->
+      <a-plane id="vr-main-board" position="0 2.0 -4.3" width="3.8" height="1.9"></a-plane>
 
-      <!-- 右の畝とポット -->
-      <a-box position="1.1 0.2 0" width="0.8" height="0.4" depth="4" color="#3e2723"></a-box>
-      <a-cylinder class="clickable" crop-spot position="1.1 0.45 -1.2" radius="0.26" height="0.1" color="#6d4c41"></a-cylinder>
-      <a-cylinder class="clickable" crop-spot position="1.1 0.45 0"    radius="0.26" height="0.1" color="#6d4c41"></a-cylinder>
-      <a-cylinder class="clickable" crop-spot position="1.1 0.45 1.2"  radius="0.26" height="0.1" color="#6d4c41"></a-cylinder>
+      <!-- VRモード時にもレーザーで直接押せる3Dコンソールボタン群 -->
+      <a-entity position="0 0.85 -4.1" rotation="-15 0 0">
+        <a-box width="3.8" height="0.5" depth="0.1" color="#1e293b"></a-box>
+        <!-- ツール選択3Dボタン -->
+        <a-box vr-btn="action: tool; arg: seed" position="-1.5 0.08 0.06" width="0.5" height="0.22" depth="0.05" color="#166534">
+          <a-text value="1.Plant" align="center" position="0 0 0.03" width="2.2" color="#fff"></a-text>
+        </a-box>
+        <a-box vr-btn="action: tool; arg: water" position="-0.9 0.08 0.06" width="0.5" height="0.22" depth="0.05" color="#0369a1">
+          <a-text value="2.Water" align="center" position="0 0 0.03" width="2.2" color="#fff"></a-text>
+        </a-box>
+        <a-box vr-btn="action: tool; arg: fertilizer" position="-0.3 0.08 0.06" width="0.5" height="0.22" depth="0.05" color="#6b21a8">
+          <a-text value="3.Fert" align="center" position="0 0 0.03" width="2.2" color="#fff"></a-text>
+        </a-box>
+        <a-box vr-btn="action: tool; arg: prune" position="0.3 0.08 0.06" width="0.5" height="0.22" depth="0.05" color="#c2410c">
+          <a-text value="4.Prune" align="center" position="0 0 0.03" width="2.2" color="#fff"></a-text>
+        </a-box>
+        <a-box vr-btn="action: tool; arg: bee" position="0.9 0.08 0.06" width="0.5" height="0.22" depth="0.05" color="#a16207">
+          <a-text value="5.Bee" align="center" position="0 0 0.03" width="2.2" color="#fff"></a-text>
+        </a-box>
+        <a-box vr-btn="action: tool; arg: harvest" position="1.5 0.08 0.06" width="0.5" height="0.22" depth="0.05" color="#be123c">
+          <a-text value="6.Harvest" align="center" position="0 0 0.03" width="2.2" color="#fff"></a-text>
+        </a-box>
+
+        <!-- 設備ON/OFF 3Dボタン -->
+        <a-box vr-btn="action: dev; arg: fan" position="-1.0 -0.15 0.06" width="0.9" height="0.16" depth="0.05" color="#0f766e">
+          <a-text value="[ FAN ON/OFF ]" align="center" position="0 0 0.03" width="2.2" color="#fff"></a-text>
+        </a-box>
+        <a-box vr-btn="action: dev; arg: mist" position="0.0 -0.15 0.06" width="0.9" height="0.16" depth="0.05" color="#0f766e">
+          <a-text value="[ MIST ON/OFF ]" align="center" position="0 0 0.03" width="2.2" color="#fff"></a-text>
+        </a-box>
+        <a-box vr-btn="action: dev; arg: led" position="1.0 -0.15 0.06" width="0.9" height="0.16" depth="0.05" color="#0f766e">
+          <a-text value="[ LED ON/OFF ]" align="center" position="0 0 0.03" width="2.2" color="#fff"></a-text>
+        </a-box>
+      </a-entity>
+
+      <!-- 左側の高設栽培ベンチ＆黒マルチシート -->
+      <a-box position="-1.6 0.35 -0.5" width="1.1" height="0.7" depth="6.2" color="#cbd5e1"></a-box>
+      <a-box position="-1.6 0.71 -0.5" width="0.95" height="0.05" depth="6.0" color="#1e293b"></a-box>
+      <!-- 左の畝：4株配置 -->
+      <a-entity smart-crop="id: 1" position="-1.6 0.75 -2.6"></a-entity>
+      <a-entity smart-crop="id: 2" position="-1.6 0.75 -1.2"></a-entity>
+      <a-entity smart-crop="id: 3" position="-1.6 0.75 0.2"></a-entity>
+      <a-entity smart-crop="id: 4" position="-1.6 0.75 1.6"></a-entity>
+
+      <!-- 右側の高設栽培ベンチ＆黒マルチシート -->
+      <a-box position="1.6 0.35 -0.5" width="1.1" height="0.7" depth="6.2" color="#cbd5e1"></a-box>
+      <a-box position="1.6 0.71 -0.5" width="0.95" height="0.05" depth="6.0" color="#1e293b"></a-box>
+      <!-- 右の畝：4株配置 -->
+      <a-entity smart-crop="id: 5" position="1.6 0.75 -2.6"></a-entity>
+      <a-entity smart-crop="id: 6" position="1.6 0.75 -1.2"></a-entity>
+      <a-entity smart-crop="id: 7" position="1.6 0.75 0.2"></a-entity>
+      <a-entity smart-crop="id: 8" position="1.6 0.75 1.6"></a-entity>
     </a-entity>
 
-    <!-- プレイヤー視点 ＆ コントローラー -->
-    <a-entity id="rig" position="0 0 1.5">
-      <!-- iPadで見回しやすいようにカメラ角度を少し下向きに調整 -->
-      <a-camera position="0 1.5 0" look-controls="touchEnabled: true"></a-camera>
-      
-      <!-- Quest 3S用レーザーコントローラー -->
-      <a-entity laser-controls="hand: left" raycaster="objects: .clickable; far: 10; lineColor: #4caf50"></a-entity>
-      <a-entity laser-controls="hand: right" raycaster="objects: .clickable; far: 10; lineColor: #4caf50"></a-entity>
+    <!-- プレイヤー視点 ＆ Quest 3S レーザーコントローラー -->
+    <a-entity id="rig" position="0 0 1.8">
+      <a-camera position="0 1.6 0" look-controls="touchEnabled: true"></a-camera>
+      <a-entity laser-controls="hand: left" raycaster="objects: .clickable; far: 12; lineColor: #38bdf8"></a-entity>
+      <a-entity laser-controls="hand: right" raycaster="objects: .clickable; far: 12; lineColor: #4ade80"></a-entity>
     </a-entity>
 
   </a-scene>
