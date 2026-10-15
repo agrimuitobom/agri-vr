@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>VRスマート農業体験 - Meta Quest 3S</title>
+  <!-- A-Frame と 環境生成コンポーネントの読み込み -->
+  <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+  <script src="https://unpkg.com/aframe-environment-component@1.3.4/dist/aframe-environment-component.min.js"></script>
+
+  <script>
+    // 全体の収穫スコア管理
+    window.harvestScore = 0;
+
+    // 作物の成長・収穫を管理するカスタムコンポーネント
+    AFRAME.registerComponent('crop-spot', {
+      schema: {
+        stage: {type: 'int', default: 0} // 0:土, 1:芽, 2:成長(緑の実), 3:熟した実(収穫可能)
+      },
+      init: function () {
+        const el = this.el;
+        
+        // 植物の見た目を作る子要素を生成
+        this.stem = document.createElement('a-cylinder');
+        this.stem.setAttribute('color', '#2e7d32');
+        this.stem.setAttribute('radius', '0.02');
+        this.stem.setAttribute('visible', 'false');
+        el.appendChild(this.stem);
+
+        this.leaves = document.createElement('a-cone');
+        this.leaves.setAttribute('color', '#4caf50');
+        this.leaves.setAttribute(' visible', 'false');
+        el.appendChild(this.leaves);
+
+        this.fruit = document.createElement('a-sphere');
+        this.fruit.setAttribute('radius', '0.06');
+        this.fruit.setAttribute('visible', 'false');
+        el.appendChild(this.fruit);
+
+        // 状態ガイドテキスト
+        this.label = document.createElement('a-text');
+        this.label.setAttribute('value', 'Click: Plant');
+        this.label.setAttribute('align', 'center');
+        this.label.setAttribute('position', '0 0.5 0');
+        this.label.setAttribute('scale', '0.4 0.4 0.4');
+        this.label.setAttribute('color', '#ffffff');
+        el.appendChild(this.label);
+
+        // レーザーポインターが重なった時のハイライト演出
+        el.addEventListener('mouseenter', () => {
+          el.setAttribute('material', 'color', '#8d6e63');
+        });
+        el.addEventListener('mouseleave', () => {
+          el.setAttribute('material', 'color', '#5d4037');
+        });
+
+        // トリガー（クリック）時の成長ロジック
+        el.addEventListener('click', () => {
+          let s = this.data.stage;
+          s = (s + 1) % 4;
+          this.data.stage = s;
+          this.updateVisuals(s);
+        });
+      },
+
+      updateVisuals: function (stage) {
+        const scoreBoard = document.querySelector('#score-text');
+        const statusBoard = document.querySelector('#action-log');
+
+        if (stage === 0) {
+          // 収穫完了 → 土に戻る
+          window.harvestScore += 1;
+          scoreBoard.setAttribute('value', 'Harvested: ' + window.harvestScore + ' pcs');
+          statusBoard.setAttribute('value', 'Status: Harvested crisp tomatoes!');
+          
+          this.stem.setAttribute('visible', 'false');
+          this.leaves.setAttribute('visible', 'false');
+          this.fruit.setAttribute('visible', 'false');
+          this.label.setAttribute('value', 'Click: Plant');
+          this.label.setAttribute('position', '0 0.4 0');
+        } 
+        else if (stage === 1) {
+          // 種まき → 発芽
+          statusBoard.setAttribute('value', 'Status: Seed planted. Give water!');
+          this.stem.setAttribute('visible', 'true');
+          this.stem.setAttribute('height', '0.2');
+          this.stem.setAttribute('position', '0 0.15 0');
+
+          this.leaves.setAttribute('visible', 'true');
+          this.leaves.setAttribute('radius-bottom', '0.12');
+          this.leaves.setAttribute('height', '0.2');
+          this.leaves.setAttribute('position', '0 0.25 0');
+
+          this.label.setAttribute('value', 'Click: Water (Grow)');
+          this.label.setAttribute('position', '0 0.55 0');
+        } 
+        else if (stage === 2) {
+          // 水やり → 成長＆緑の実
+          statusBoard.setAttribute('value', 'Status: Growing well! Wait for ripening.');
+          this.stem.setAttribute('height', '0.5');
+          this.stem.setAttribute('position', '0 0.3 0');
+
+          this.leaves.setAttribute('radius-bottom', '0.22');
+          this.leaves.setAttribute('height', '0.4');
+          this.leaves.setAttribute('position', '0 0.45 0');
+
+          this.fruit.setAttribute('visible', 'true');
+          this.fruit.setAttribute('color', '#8bc34a'); // 緑の実
+          this.fruit.setAttribute('position', '0.1 0.4 0.1');
+
+          this.label.setAttribute('value', 'Click: Ripen (Sun)');
+          this.label.setAttribute('position', '0 0.8 0');
+        } 
+        else if (stage === 3) {
+          // 熟成 → 赤いトマト（収穫可能）
+          statusBoard.setAttribute('value', 'Status: Ripe and ready to harvest!');
+          this.fruit.setAttribute('color', '#e53935'); // 赤く熟す
+          this.fruit.setAttribute('radius', '0.08');
+
+          this.label.setAttribute('value', '[ READY! Click to Harvest ]');
+          this.label.setAttribute('color', '#ffeb3b');
+        }
+      }
+    });
+  </script>
+</head>
+<body>
+  <a-scene>
+    <!-- 自然な屋外環境の生成 -->
+    <a-entity environment="preset: forest; dressingAmount: 20; groundColor: #455a64; groundTexture: walkernoise"></a-entity>
+
+    <!-- 照明 -->
+    <a-light type="ambient" color="#ffffff" intensity="0.6"></a-light>
+    <a-light type="directional" color="#fff8e1" intensity="0.8" position="-2 4 2"></a-light>
+
+    <!-- 簡易ビニールハウス（骨組みと半透明屋根） -->
+    <a-entity position="0 0 -2">
+      <!-- ハウスのアーチ屋根（半透明） -->
+      <a-cylinder position="0 2.5 0" radius="3.5" height="6" rotation="90 0 0" 
+                  theta-start="90" theta-length="180" side="double" 
+                  material="color: #e0f7fa; opacity: 0.25; transparent: true"></a-cylinder>
+      
+      <!-- スマート農業ダッシュボード（正面パネル） -->
+      <a-plane position="0 2.2 -2.8" width="3.2" height="1.4" color="#263238" material="opacity: 0.9">
+        <a-text value="=== Smart Greenhouse VR ===" align="center" position="0 0.45 0.02" width="4" color="#4dd0e1"></a-text>
+        <a-text value="Temp: 25.4 C  |  Humidity: 62%  |  Lux: 38,000" align="center" position="0 0.18 0.02" width="3.2" color="#a5d6a7"></a-text>
+        <a-text id="score-text" value="Harvested: 0 pcs" align="center" position="0 -0.12 0.02" width="5" color="#ffeb3b"></a-text>
+        <a-text id="action-log" value="Status: Point laser at soilpots and pull trigger!" align="center" position="0 -0.45 0.02" width="3.2" color="#ffffff"></a-text>
+      </a-plane>
+
+      <!-- 左の畝（うね） -->
+      <a-box position="-1.2 0.2 0" width="0.9" height="0.4" depth="4" color="#3e2723"></a-box>
+      <!-- 右の畝（うね） -->
+      <a-box position="1.2 0.2 0" width="0.9" height="0.4" depth="4" color="#3e2723"></a-box>
+
+      <!-- 植付けスポット（左の畝に3つ） -->
+      <a-cylinder class="clickable" crop-spot position="-1.2 0.45 -1.2" radius="0.25" height="0.1" color="#5d4037"></a-cylinder>
+      <a-cylinder class="clickable" crop-spot position="-1.2 0.45 0"    radius="0.25" height="0.1" color="#5d4037"></a-cylinder>
+      <a-cylinder class="clickable" crop-spot position="-1.2 0.45 1.2"  radius="0.25" height="0.1" color="#5d4037"></a-cylinder>
+
+      <!-- 植付けスポット（右の畝に3つ） -->
+      <a-cylinder class="clickable" crop-spot position="1.2 0.45 -1.2" radius="0.25" height="0.1" color="#5d4037"></a-cylinder>
+      <a-cylinder class="clickable" crop-spot position="1.2 0.45 0"    radius="0.25" height="0.1" color="#5d4037"></a-cylinder>
+      <a-cylinder class="clickable" crop-spot position="1.2 0.45 1.2"  radius="0.25" height="0.1" color="#5d4037"></a-cylinder>
+    </a-entity>
+
+    <!-- プレイヤー（カメラ＆Questコントローラー設定） -->
+    <a-entity id="rig" position="0 0 1.2">
+      <!-- カメラ（PC・スマホでのテスト用にマウスカーソルも併用設定） -->
+      <a-camera position="0 1.6 0" cursor="rayOrigin: mouse" raycaster="objects: .clickable"></a-camera>
+      
+      <!-- Quest 3S 左コントローラー -->
+      <a-entity laser-controls="hand: left" raycaster="objects: .clickable; far: 10; lineColor: #4caf50"></a-entity>
+      <!-- Quest 3S 右コントローラー -->
+      <a-entity laser-controls="hand: right" raycaster="objects: .clickable; far: 10; lineColor: #4caf50"></a-entity>
+    </a-entity>
+
+  </a-scene>
+</body>
+</html>
